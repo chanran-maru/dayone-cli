@@ -53,7 +53,7 @@ func readContent() (string, error) {
 }
 
 // CREATE
-var writeCmd = &cobra.Command{
+var journalWriteCmd = &cobra.Command{
 	Use:   "write",
 	Short: "Write today's journal",
 
@@ -78,7 +78,7 @@ var writeCmd = &cobra.Command{
 }
 
 // READ
-var readCmd = &cobra.Command{
+var journalReadCmd = &cobra.Command{
 	Use:   "read [date]",
 	Short: "Read a journal by date",
 	Args:  cobra.ExactArgs(1),
@@ -102,7 +102,7 @@ var readCmd = &cobra.Command{
 }
 
 // LIST
-var listCmd = &cobra.Command{
+var journalListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all journals",
 	Args:  cobra.NoArgs,
@@ -129,7 +129,7 @@ var listCmd = &cobra.Command{
 }
 
 // UPDATE
-var editCmd = &cobra.Command{
+var journalEditCmd = &cobra.Command{
 	Use:   "edit [date]",
 	Short: "Edit a journal",
 	Args:  cobra.ExactArgs(1),
@@ -157,7 +157,7 @@ var editCmd = &cobra.Command{
 }
 
 // DELETE
-var deleteCmd = &cobra.Command{
+var journalDeleteCmd = &cobra.Command{
 	Use:   "delete [date]",
 	Short: "Delete a journal",
 	Args:  cobra.ExactArgs(1),
@@ -181,11 +181,11 @@ var deleteCmd = &cobra.Command{
 
 func init() {
 	journalCmd.AddCommand(
-		writeCmd,
-		readCmd,
-		listCmd,
-		editCmd,
-		deleteCmd,
+		journalWriteCmd,
+		journalReadCmd,
+		journalListCmd,
+		journalEditCmd,
+		journalDeleteCmd,
 	)
 
 	rootCmd.AddCommand(journalCmd)

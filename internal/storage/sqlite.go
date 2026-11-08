@@ -46,5 +46,33 @@ func OpenDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	// tasks 테이블 생성
+	query = `
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL
+        ); `
+	if _, err := db.Exec(query); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	// reviews 테이블 생성
+	query = `
+        CREATE TABLE IF NOT EXISTS reviews (
+            date TEXT PRIMARY KEY,
+            mood TEXT NOT NULL,
+            rating INTEGER NOT NULL,
+            content TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        ); `
+	if _, err := db.Exec(query); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	return db, nil
 }
