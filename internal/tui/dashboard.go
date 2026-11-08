@@ -655,89 +655,218 @@ func executeStats() string {
 }
 
 func (m model) View() tea.View {
+	// 색상 테마
+	primaryColor := lipgloss.Color("#60A5FA")   // 파란색
+	successColor := lipgloss.Color("#34D399")   // 초록색
+	mutedColor := lipgloss.Color("#6B7280")     // 회색
+	brightColor := lipgloss.Color("#F3F4F6")    // 밝은 흰색
+	borderColor := lipgloss.Color("#374151")    // 어두운 회색(테두리)
+
+	// 스타일 정의
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#7C9FFF"))
+		Foreground(primaryColor).
+		Padding(0, 1)
+
+	subtitleStyle := lipgloss.NewStyle().
+		Foreground(mutedColor).
+		Italic(true)
 
 	selectedStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#86EFAC"))
+		Foreground(lipgloss.Color("#1F2937")).
+		Background(successColor).
+		Padding(0, 1).
+		Margin(0, 0)
 
-	mutedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#9CA3AF"))
+	menuItemStyle := lipgloss.NewStyle().
+		Foreground(brightColor).
+		Padding(0, 1)
+
+	boxStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1).
+		Margin(1, 0)
+
+	widgetBoxStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(1, 2).
+		Margin(0, 0)
+
+	hintStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#4B5563"))
 
 	date := time.Now().Format("Monday, January 2, 2006")
+	now := time.Now()
+
+	// 메뉴 아이콘
+	menuIcons := []string{
+		"📋", // Today's Overview
+		"📅", // Calendar
+		"📝", // Journal
+		"✅", // Tasks
+		"📊", // Daily Review
+		"📈", // Statistics
+		"🚪", // Quit
+	}
 
 	var s string
 
 	switch m.state {
 	case stateResult:
 		// 결과 화면 표시
-		s = titleStyle.Render("DAYONE CLI") + "\n"
-		s += mutedStyle.Render("Your personal daily dashboard") + "\n\n"
-		s += date + "\n\n"
-		s += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-		s += m.output + "\n"
-		s += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-		s += mutedStyle.Render("Enter: Back to menu  q: Quit")
+		header := titleStyle.Render("📖 DayOne CLI") + "\n"
+		header += subtitleStyle.Render("Your personal daily dashboard") + "\n"
+		header += boxStyle.Render(" " + date + " ") + "\n\n"
+
+		content := boxStyle.Render("\n" + m.output + "\n")
+
+		footer := "\n" + hintStyle.Render("⏎ Enter: Back to menu    ⎋ q: Quit")
+
+		s = header + content + footer
 
 	case stateSubMenu:
 		// 하위 메뉴 표시
 		parentName := m.menus[m.parent]
-		s = titleStyle.Render("DAYONE CLI") + "\n"
-		s += mutedStyle.Render("Your personal daily dashboard") + "\n\n"
-		s += date + "\n\n"
-		s += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-		s += mutedStyle.Render("Menu: " + parentName) + "\n"
-		s += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+		parentIcon := menuIcons[m.parent]
 
+		header := titleStyle.Render("📖 DayOne CLI") + "\n"
+		header += subtitleStyle.Render("Your personal daily dashboard") + "\n"
+		header += boxStyle.Render(" "+parentIcon+" "+parentName+" ") + "\n\n"
+
+		// 메뉴 항목 렌더링
+		var menuLines string
 		for i, item := range m.subMenu {
 			if i == m.subCursor {
-				s += selectedStyle.Render("> " + item) + "\n"
+				menuLines += selectedStyle.Render("  " + item + "  ") + "\n"
 			} else {
-				s += "  " + item + "\n"
+				menuLines += menuItemStyle.Render("  " + item + "  ") + "\n"
 			}
 		}
 
-		s += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-		s += mutedStyle.Render("↑/↓: Navigate  Enter: Select  Esc: Back  q: Quit")
+		menuBox := boxStyle.Render(menuLines)
+
+		footer := "\n" + hintStyle.Render("↑/↓ Navigate    ⏎ Select    ⎋ Back    ⎋ q: Quit")
+
+		s = header + menuBox + footer
 
 	case stateInput:
 		// 입력 화면 표시
 		parentName := m.menus[m.parent]
-		s = titleStyle.Render("DAYONE CLI") + "\n"
-		s += mutedStyle.Render("Your personal daily dashboard") + "\n\n"
-		s += date + "\n\n"
-		s += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-		s += mutedStyle.Render("Menu: " + parentName) + "\n"
-		s += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-		s += m.inputHint + "\n"
-		s += "> " + m.input + "█\n\n"
-		s += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-		s += mutedStyle.Render("Type and press Enter  Esc: Cancel  q: Quit")
+		parentIcon := menuIcons[m.parent]
+
+		header := titleStyle.Render("📖 DayOne CLI") + "\n"
+		header += subtitleStyle.Render("Your personal daily dashboard") + "\n"
+		header += boxStyle.Render(" "+parentIcon+" "+parentName+" ") + "\n\n"
+
+		inputBox := widgetBoxStyle.Render(
+			"\n"+m.inputHint+"\n" +
+				"▸ "+m.input+"█",
+		)
+
+		footer := "\n\n" + hintStyle.Render("⏎ Enter: Submit    ⎋ Esc: Cancel    ⎋ q: Quit")
+
+		s = header + inputBox + footer
 
 	default:
 		// 대시보드 메뉴 표시
-		s = titleStyle.Render("DAYONE CLI") + "\n"
-		s += mutedStyle.Render("Your personal daily dashboard") + "\n\n"
-		s += date + "\n\n"
-		s += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+		// 헤더
+		header := titleStyle.Render("📖 DayOne CLI") + "\n"
+		header += subtitleStyle.Render("Your personal daily dashboard") + "\n"
+		header += boxStyle.Render(" "+date+" ") + "\n\n"
 
+		// 위젯 영역 - 오늘 요약
+		var widgets string
+		widgets += renderWidgets(now)
+
+		// 메뉴 영역
+		var menuLines string
 		for i, item := range m.menus {
+			icon := menuIcons[i]
 			if i == m.cursor {
-				s += selectedStyle.Render("> " + item) + "\n"
+				menuLines += selectedStyle.Render(" "+icon+" "+item+" ") + "\n"
 			} else {
-				s += "  " + item + "\n"
+				menuLines += menuItemStyle.Render(" "+icon+" "+item+" ") + "\n"
 			}
 		}
 
-		s += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-		s += mutedStyle.Render("↑/↓: Navigate  Enter: Select  q: Quit")
+		menuBox := boxStyle.Render(menuLines)
+
+		footer := "\n" + hintStyle.Render("↑/↓ Navigate    ⏎ Select    ⎋ q: Quit")
+
+		s = header + widgets + menuBox + footer
 	}
 
 	v := tea.NewView(s)
 	v.AltScreen = true
 	return v
+}
+
+// 위젯 렌더링 - 대시보드에 오늘 요약 표시
+func renderWidgets(now time.Time) string {
+	date := now.Format("2006-01-02")
+
+	db, err := storage.OpenDB()
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+
+	// 일기 확인
+	journalRepo := journal.NewRepository(db)
+	_, errJournal := journalRepo.GetByDate(date)
+	hasJournal := (errJournal == nil)
+
+	// 작업 확인
+	taskRepo := task.NewRepository(db)
+	pendingTasks, _ := taskRepo.List("pending")
+	pendingCount := len(pendingTasks)
+
+	// 리뷰 확인
+	reviewRepo := review.NewRepository(db)
+	_, errReview := reviewRepo.GetByDate(date)
+	hasReview := (errReview == nil)
+
+	// 통계 확인
+	svc := statistics.NewService(db)
+	journalStats, _ := svc.GetJournalStats()
+	streak := journalStats.CurrentStreak
+
+	// 위젯 1: 오늘 상태
+	var todayStatus string
+	if hasJournal {
+		todayStatus += "📝 Journal ✓\n"
+	} else {
+		todayStatus += "📝 Journal ✗\n"
+	}
+	if hasReview {
+		todayStatus += "📊 Review ✓\n"
+	} else {
+		todayStatus += "📊 Review ✗\n"
+	}
+	if pendingCount > 0 {
+		todayStatus += fmt.Sprintf("✅ Tasks: %d pending", pendingCount)
+	} else {
+		todayStatus += "✅ Tasks: All done!"
+	}
+
+	// 위젯 2: 연속 일수
+	streakText := fmt.Sprintf("🔥 %d day streak", streak)
+
+	// 위젯 박스 스타일
+	widgetStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#374151")).
+		Padding(1, 2).
+		Width(20)
+
+	widget1 := widgetStyle.Render(todayStatus)
+	widget2 := widgetStyle.Render(streakText)
+
+	// 두 위젯을 나란히 배치
+	return lipgloss.JoinHorizontal(lipgloss.Top, widget1, "  ", widget2) + "\n\n"
 }
 
 func RunDashboard() error {
