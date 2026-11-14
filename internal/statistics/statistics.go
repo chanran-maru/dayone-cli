@@ -2,7 +2,7 @@ package statistics
 
 import (
 	"database/sql"
-	"fmt"
+	"strings"
 	"time"
 
 	"DayOneCLI/internal/journal"
@@ -127,44 +127,23 @@ func (s *StatisticsService) GetReviewStats() (ReviewStats, error) {
 
 // 연속 작성 일수 계산
 func calculateStreak(journals []journal.Journal, now time.Time) int {
-	if len(journals) == 0 {
-		return 0
+	dateSet := make(map[string]bool, len(journals))
+	for _, j := range journals {
+		dateSet[j.Date] = true
 	}
 
 	streak := 0
 	checkDate := now
 
 	// 오늘 일기 작성했는지 확인
-	todayStr := now.Format("2006-01-02")
-	hasToday := false
-	for _, j := range journals {
-		if j.Date == todayStr {
-			hasToday = true
-			break
-		}
-	}
-
-	if !hasToday {
+	if !dateSet[now.Format("2006-01-02")] {
 		// 오늘 작성하지 않았다면 어제부터 확인
 		checkDate = now.AddDate(0, 0, -1)
 	}
 
-	for {
-		dateStr := checkDate.Format("2006-01-02")
-		found := false
-		for _, j := range journals {
-			if j.Date == dateStr {
-				found = true
-				break
-			}
-		}
-
-		if found {
-			streak++
-			checkDate = checkDate.AddDate(0, 0, -1)
-		} else {
-			break
-		}
+	for dateSet[checkDate.Format("2006-01-02")] {
+		streak++
+		checkDate = checkDate.AddDate(0, 0, -1)
 	}
 
 	return streak
@@ -172,42 +151,25 @@ func calculateStreak(journals []journal.Journal, now time.Time) int {
 
 // 가장 긴 연속 작성 일수 계산
 func calculateLongestStreak(journals []journal.Journal) int {
-	if len(journals) == 0 {
-		return 0
-	}
-
-	// 날짜를 집합으로 변환
-	dateSet := make(map[string]bool)
+	dateSet := make(map[time.Time]bool, len(journals))
 	for _, j := range journals {
-		dateSet[j.Date] = true
-	}
-
-	longest := 0
-	current := 0
-
-	// 가장 오래된 날짜부터 확인
-	var earliest time.Time
-	for _, j := range journals {
-		parsed, err := time.Parse("2006-01-02", j.Date)
-		if err == nil && (earliest.IsZero() || parsed.Before(earliest)) {
-			earliest = parsed
+		if date, err := time.Parse("2006-01-02", j.Date); err == nil {
+			dateSet[date] = true
 		}
 	}
 
-	if !earliest.IsZero() {
-		for d := earliest; ; d = d.AddDate(0, 0, 1) {
-			if dateSet[d.Format("2006-01-02")] {
-				current++
-				if current > longest {
-					longest = current
-				}
-			} else {
-				current = 0
-			}
-			// 2년 뒤까지 확인
-			if d.After(earliest.AddDate(2, 0, 0)) {
-				break
-			}
+	longest := 0
+	for date := range dateSet {
+		// 각 연속 구간의 시작에서만 탐색하여 전체 날짜를 한 번씩 확인한다.
+		if dateSet[date.AddDate(0, 0, -1)] {
+			continue
+		}
+		current := 0
+		for d := date; dateSet[d]; d = d.AddDate(0, 0, 1) {
+			current++
+		}
+		if current > longest {
+			longest = current
 		}
 	}
 
@@ -216,20 +178,13 @@ func calculateLongestStreak(journals []journal.Journal) int {
 
 // 통계 표시용 문자열 생성
 func FormatStars(rating float64) string {
+	// 범위를 벗어나거나 NaN인 값도 별 다섯 개로 안전하게 표시한다.
+	if !(rating >= 0) {
+		rating = 0
+	}
+	if rating > 5 {
+		rating = 5
+	}
 	fullStars := int(rating)
-	emptyStars := 5 - fullStars
-	if emptyStars < 0 {
-		emptyStars = 0
-	}
-	return fmt.Sprintf("%s%s", 
-		repeat('★', fullStars), 
-		repeat('☆', emptyStars))
-}
-
-func repeat(r rune, count int) string {
-	s := make([]rune, count)
-	for i := range s {
-		s[i] = r
-	}
-	return string(s)
+	return strings.Repeat("★", fullStars) + strings.Repeat("☆", 5-fullStars)
 }

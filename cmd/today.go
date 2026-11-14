@@ -33,14 +33,19 @@ var todayCmd = &cobra.Command{
 		j, err := journalRepo.GetByDate(date)
 		if err == nil {
 			fmt.Printf("📝 Journal: %s\n", j.Content)
-		} else {
+		} else if journal.IsNotFound(err) {
 			fmt.Println("📝 Journal: Not written")
+		} else {
+			return fmt.Errorf("load today's journal: %w", err)
 		}
 
 		// 작업 확인
 		taskRepo := task.NewRepository(db)
 		pendingTasks, err := taskRepo.List("pending")
-		if err == nil && len(pendingTasks) > 0 {
+		if err != nil {
+			return fmt.Errorf("load pending tasks: %w", err)
+		}
+		if len(pendingTasks) > 0 {
 			fmt.Printf("\n✅ Pending Tasks (%d):\n", len(pendingTasks))
 			for _, t := range pendingTasks {
 				fmt.Printf("  ⬜ [%d] %s\n", t.ID, t.Title)
@@ -57,8 +62,10 @@ var todayCmd = &cobra.Command{
 			if rev.Content != "" {
 				fmt.Printf("  %s\n", rev.Content)
 			}
-		} else {
+		} else if review.IsNotFound(err) {
 			fmt.Println("\n📊 Review: Not written")
+		} else {
+			return fmt.Errorf("load today's review: %w", err)
 		}
 
 		return nil

@@ -5,14 +5,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"DayOneCLI/internal/journal"
 	"DayOneCLI/internal/review"
-	"DayOneCLI/internal/storage"
 	"DayOneCLI/internal/statistics"
+	"DayOneCLI/internal/storage"
 	"DayOneCLI/internal/task"
 )
 
@@ -25,15 +25,29 @@ const (
 )
 
 type model struct {
-	cursor    int
-	menus     []string
-	state     string // "dashboard", "result", "submenu", "input"
-	output    string
-	subMenu   []string // 하위 메뉴 항목
-	subCursor int       // 하위 메뉴 커서
-	parent    int       // 상위 메뉴 인덱스
-	input     string    // 입력 모드에서 입력 중인 텍스트
-	inputHint string    // 입력 프롬프트
+	cursor      int
+	menus       []string
+	state       string // "dashboard", "result", "submenu", "input"
+	output      string
+	subMenu     []string // 하위 메뉴 항목
+	subCursor   int      // 하위 메뉴 커서
+	parent      int      // 상위 메뉴 인덱스
+	input       string   // 입력 모드에서 입력 중인 텍스트
+	inputHint   string   // 입력 프롬프트
+	width       int
+	height      int
+	scroll      int
+	summary     string
+	taskPreview string
+}
+
+type dashboardLoadedMsg struct {
+	summary string
+	tasks   string
+}
+
+func loadDashboard() tea.Msg {
+	return dashboardLoadedMsg{summary: renderWidgets(time.Now()), tasks: executeTasks()}
 }
 
 func initialModel() model {
@@ -52,17 +66,33 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return loadDashboard
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.scroll = 0
+		return m, nil
+	case dashboardLoadedMsg:
+		m.summary, m.taskPreview = msg.summary, msg.tasks
+		return m, nil
 	case tea.KeyPressMsg:
 		key := msg.String()
 
-		// Ctrl+C / q는 항상 종료
-		if key == "ctrl+c" || key == "q" {
+		// 입력 중에는 q도 일반 문자로 취급한다.
+		if key == "ctrl+c" || (key == "q" && m.state != stateInput) {
 			return m, tea.Quit
+		}
+		if key == "pgdown" || key == "pgup" {
+			_, limit := m.layout()
+			step := max(1, m.height/2)
+			if key == "pgup" {
+				step = -step
+			}
+			m.scroll = max(0, min(limit, m.scroll+step))
+			return m, nil
 		}
 
 		switch m.state {
@@ -86,14 +116,17 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
+			m.scroll = 0
 			if m.cursor > 0 {
 				m.cursor--
 			}
 		case "down", "j":
+			m.scroll = 0
 			if m.cursor < len(m.menus)-1 {
 				m.cursor++
 			}
 		case "enter":
+			m.scroll = 0
 			if m.cursor == len(m.menus)-1 {
 				return m, tea.Quit
 			}
@@ -104,6 +137,9 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.subMenu = subItems
 				m.subCursor = 0
 				m.parent = m.cursor
+				if m.parent == 3 {
+					m.output = executeTasks()
+				}
 				return m, nil
 			}
 			// 하위 메뉴가 없는 경우(Today, Statistics) → 결과 표시
@@ -123,11 +159,13 @@ func (m model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			m.state = stateDashboard
 			m.output = ""
-			return m, nil
+			m.scroll = 0
+			return m, loadDashboard
 		case "esc":
 			m.state = stateDashboard
 			m.output = ""
-			return m, nil
+			m.scroll = 0
+			return m, loadDashboard
 		}
 	}
 	return m, nil
@@ -139,10 +177,12 @@ func (m model) updateSubMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
+			m.scroll = 0
 			if m.subCursor > 0 {
 				m.subCursor--
 			}
 		case "down", "j":
+			m.scroll = 0
 			if m.subCursor < len(m.subMenu)-1 {
 				m.subCursor++
 			}
@@ -150,14 +190,16 @@ func (m model) updateSubMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateDashboard
 			m.subMenu = nil
 			m.subCursor = 0
-			return m, nil
+			m.scroll = 0
+			return m, loadDashboard
 		case "enter":
+			m.scroll = 0
 			// Back 선택 시 대시보드로 돌아가기
 			if m.subCursor == len(m.subMenu)-1 {
 				m.state = stateDashboard
 				m.subMenu = nil
 				m.subCursor = 0
-				return m, nil
+				return m, loadDashboard
 			}
 			// 입력이 필요한 항목인지 확인
 			item := m.subMenu[m.subCursor]
@@ -165,6 +207,10 @@ func (m model) updateSubMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateInput
 				m.input = ""
 				m.inputHint = getInputHint(item)
+				m.output = ""
+				if item == "Complete Task" || item == "Delete Task" {
+					m.output = executeTasks()
+				}
 				return m, nil
 			}
 			// 하위 메뉴 선택 실행
@@ -186,19 +232,25 @@ func (m model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.state = stateSubMenu
 			m.input = ""
+			m.scroll = 0
 			return m, nil
 		case "enter":
+			m.scroll = 0
 			// 입력 처리
 			if m.input != "" {
 				result := processInput(m.parent, m.inputHint, m.input)
 				m.output = result
+				if m.inputHint == getInputHint("Complete Task") || m.inputHint == getInputHint("Delete Task") {
+					m.output += "\n\n" + executeTasks()
+				}
 				m.state = stateResult
 				m.input = ""
 				return m, nil
 			}
 		case "backspace":
 			if len(m.input) > 0 {
-				m.input = m.input[:len(m.input)-1]
+				_, size := utf8.DecodeLastRuneInString(m.input)
+				m.input = m.input[:len(m.input)-size]
 			}
 		default:
 			// 일반 문자 입력 (bubbletea v2: msg.Key().Text 사용)
@@ -357,8 +409,11 @@ func processInput(parent int, inputHint string, input string) string {
 	case "Enter date (YYYY-MM-DD):":
 		repo := journal.NewRepository(db)
 		j, err := repo.GetByDate(input)
-		if err != nil {
+		if journal.IsNotFound(err) {
 			return fmt.Sprintf("No journal found for %s", input)
+		}
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
 		}
 		return fmt.Sprintf("%s\n\n%s", j.Date, j.Content)
 
@@ -370,24 +425,32 @@ func processInput(parent int, inputHint string, input string) string {
 		}
 		return fmt.Sprintf("Task added: %s", input)
 
-	case "Enter task ID to complete:":
+	case "Enter task ID to complete:", "Enter task ID to delete:":
 		id, err := strconv.Atoi(input)
 		if err != nil {
 			return fmt.Sprintf("Invalid ID: %s", input)
 		}
 		repo := task.NewRepository(db)
-		err = repo.Complete(id)
+		tasks, err := repo.ListByDate(time.Now().Format("2006-01-02"))
 		if err != nil {
 			return fmt.Sprintf("Error: %v", err)
 		}
-		return fmt.Sprintf("Task %d completed!", id)
-
-	case "Enter task ID to delete:":
-		id, err := strconv.Atoi(input)
-		if err != nil {
-			return fmt.Sprintf("Invalid ID: %s", input)
+		found := false
+		for _, t := range tasks {
+			if t.ID == id {
+				found = true
+				break
+			}
 		}
-		repo := task.NewRepository(db)
+		if !found {
+			return "Please enter an ID from today's tasks."
+		}
+		if inputHint == "Enter task ID to complete:" {
+			if err := repo.Complete(id); err != nil {
+				return fmt.Sprintf("Error: %v", err)
+			}
+			return fmt.Sprintf("Task %d completed!", id)
+		}
 		err = repo.Delete(id)
 		if err != nil {
 			return fmt.Sprintf("Error: %v", err)
@@ -450,14 +513,19 @@ func executeToday() string {
 	j, err := journalRepo.GetByDate(date)
 	if err == nil {
 		sb.WriteString(fmt.Sprintf("Journal: %s\n", j.Content))
-	} else {
+	} else if journal.IsNotFound(err) {
 		sb.WriteString("Journal: Not written\n")
+	} else {
+		return fmt.Sprintf("Error loading journal: %v", err)
 	}
 
 	// 작업
 	taskRepo := task.NewRepository(db)
 	pendingTasks, err := taskRepo.List("pending")
-	if err == nil && len(pendingTasks) > 0 {
+	if err != nil {
+		return fmt.Sprintf("Error loading tasks: %v", err)
+	}
+	if len(pendingTasks) > 0 {
 		sb.WriteString(fmt.Sprintf("\nPending Tasks (%d):\n", len(pendingTasks)))
 		for _, t := range pendingTasks {
 			sb.WriteString(fmt.Sprintf("  [%d] %s\n", t.ID, t.Title))
@@ -474,8 +542,10 @@ func executeToday() string {
 		if rev.Content != "" {
 			sb.WriteString(fmt.Sprintf("  %s\n", rev.Content))
 		}
-	} else {
+	} else if review.IsNotFound(err) {
 		sb.WriteString("\nReview: Not written\n")
+	} else {
+		return fmt.Sprintf("Error loading review: %v", err)
 	}
 
 	return sb.String()
@@ -497,7 +567,7 @@ func executeCalendar() string {
 	last := first.AddDate(0, 1, -1).Day()
 	for day := 1; day <= last; day++ {
 		sb.WriteString(fmt.Sprintf("%2d ", day))
-		if (int(first.Weekday())+day-1)%7 == 0 {
+		if (int(first.Weekday())+day)%7 == 0 {
 			sb.WriteString("\n")
 		}
 	}
@@ -548,17 +618,25 @@ func executeTasks() string {
 	defer db.Close()
 
 	repo := task.NewRepository(db)
-	tasks, err := repo.ListAll()
+	date := time.Now().Format("2006-01-02")
+	tasks, err := repo.ListByDate(date)
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err)
 	}
 
+	sb.WriteString(fmt.Sprintf("=== Today's Tasks (%s) ===\n", date))
 	if len(tasks) == 0 {
-		sb.WriteString("No tasks yet.\n")
+		sb.WriteString("No tasks for today.\n")
 		return sb.String()
 	}
+	completed := 0
+	for _, t := range tasks {
+		if t.Status == "completed" {
+			completed++
+		}
+	}
+	sb.WriteString(fmt.Sprintf("%d pending  ·  %d completed\n\n", len(tasks)-completed, completed))
 
-	sb.WriteString("=== Tasks ===\n")
 	for _, t := range tasks {
 		status := "⬜"
 		if t.Status == "completed" {
@@ -592,7 +670,7 @@ func executeReview() string {
 	sb.WriteString("=== Recent Reviews ===\n")
 	count := 0
 	for _, rev := range reviews {
-		stars := strings.Repeat("★", rev.Rating) + strings.Repeat("☆", 5-rev.Rating)
+		stars := statistics.FormatStars(float64(rev.Rating))
 		sb.WriteString(fmt.Sprintf("%s %s [%s]\n", rev.Date, rev.Mood, stars))
 		if rev.Content != "" {
 			sb.WriteString(fmt.Sprintf("  %s\n", rev.Content))
@@ -621,187 +699,40 @@ func executeStats() string {
 
 	// 일기 통계
 	journalStats, err := svc.GetJournalStats()
-	if err == nil {
-		sb.WriteString("Journal\n")
-		sb.WriteString(fmt.Sprintf("  Total: %d\n", journalStats.TotalCount))
-		sb.WriteString(fmt.Sprintf("  This month: %d\n", journalStats.ThisMonth))
-		sb.WriteString(fmt.Sprintf("  This week: %d\n", journalStats.ThisWeek))
-		sb.WriteString(fmt.Sprintf("  Current streak: %d days\n", journalStats.CurrentStreak))
-		sb.WriteString(fmt.Sprintf("  Longest streak: %d days\n\n", journalStats.LongestStreak))
+	if err != nil {
+		return fmt.Sprintf("Error loading journal statistics: %v", err)
 	}
+	sb.WriteString("Journal\n")
+	sb.WriteString(fmt.Sprintf("  Total: %d\n", journalStats.TotalCount))
+	sb.WriteString(fmt.Sprintf("  This month: %d\n", journalStats.ThisMonth))
+	sb.WriteString(fmt.Sprintf("  This week: %d\n", journalStats.ThisWeek))
+	sb.WriteString(fmt.Sprintf("  Current streak: %d days\n", journalStats.CurrentStreak))
+	sb.WriteString(fmt.Sprintf("  Longest streak: %d days\n\n", journalStats.LongestStreak))
 
 	// 작업 통계
 	taskStats, err := svc.GetTaskStats()
-	if err == nil {
-		sb.WriteString("Tasks\n")
-		sb.WriteString(fmt.Sprintf("  Total: %d\n", taskStats.Total))
-		sb.WriteString(fmt.Sprintf("  Pending: %d\n", taskStats.Pending))
-		sb.WriteString(fmt.Sprintf("  Completed: %d\n\n", taskStats.Completed))
+	if err != nil {
+		return fmt.Sprintf("Error loading task statistics: %v", err)
 	}
+	sb.WriteString("Tasks\n")
+	sb.WriteString(fmt.Sprintf("  Total: %d\n", taskStats.Total))
+	sb.WriteString(fmt.Sprintf("  Pending: %d\n", taskStats.Pending))
+	sb.WriteString(fmt.Sprintf("  Completed: %d\n\n", taskStats.Completed))
 
 	// 리뷰 통계
 	reviewStats, err := svc.GetReviewStats()
-	if err == nil {
-		sb.WriteString("Reviews\n")
-		sb.WriteString(fmt.Sprintf("  Total: %d\n", reviewStats.TotalCount))
-		if reviewStats.TotalCount > 0 {
-			sb.WriteString(fmt.Sprintf("  Average rating: %.1f/5 %s\n",
-				reviewStats.AvgRating,
-				statistics.FormatStars(reviewStats.AvgRating)))
-		}
+	if err != nil {
+		return fmt.Sprintf("Error loading review statistics: %v", err)
+	}
+	sb.WriteString("Reviews\n")
+	sb.WriteString(fmt.Sprintf("  Total: %d\n", reviewStats.TotalCount))
+	if reviewStats.TotalCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Average rating: %.1f/5 %s\n",
+			reviewStats.AvgRating,
+			statistics.FormatStars(reviewStats.AvgRating)))
 	}
 
 	return sb.String()
-}
-
-func (m model) View() tea.View {
-	// 색상 테마
-	primaryColor := lipgloss.Color("#60A5FA")   // 파란색
-	successColor := lipgloss.Color("#34D399")   // 초록색
-	mutedColor := lipgloss.Color("#6B7280")     // 회색
-	brightColor := lipgloss.Color("#F3F4F6")    // 밝은 흰색
-	borderColor := lipgloss.Color("#374151")    // 어두운 회색(테두리)
-
-	// 스타일 정의
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(primaryColor).
-		Padding(0, 1)
-
-	subtitleStyle := lipgloss.NewStyle().
-		Foreground(mutedColor).
-		Italic(true)
-
-	selectedStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#1F2937")).
-		Background(successColor).
-		Padding(0, 1).
-		Margin(0, 0)
-
-	menuItemStyle := lipgloss.NewStyle().
-		Foreground(brightColor).
-		Padding(0, 1)
-
-	boxStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Padding(0, 1).
-		Margin(1, 0)
-
-	widgetBoxStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Padding(1, 2).
-		Margin(0, 0)
-
-	hintStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#4B5563"))
-
-	date := time.Now().Format("Monday, January 2, 2006")
-	now := time.Now()
-
-	// 메뉴 아이콘
-	menuIcons := []string{
-		"📋", // Today's Overview
-		"📅", // Calendar
-		"📝", // Journal
-		"✅", // Tasks
-		"📊", // Daily Review
-		"📈", // Statistics
-		"🚪", // Quit
-	}
-
-	var s string
-
-	switch m.state {
-	case stateResult:
-		// 결과 화면 표시
-		header := titleStyle.Render("📖 DayOne CLI") + "\n"
-		header += subtitleStyle.Render("Your personal daily dashboard") + "\n"
-		header += boxStyle.Render(" " + date + " ") + "\n\n"
-
-		content := boxStyle.Render("\n" + m.output + "\n")
-
-		footer := "\n" + hintStyle.Render("⏎ Enter: Back to menu    ⎋ q: Quit")
-
-		s = header + content + footer
-
-	case stateSubMenu:
-		// 하위 메뉴 표시
-		parentName := m.menus[m.parent]
-		parentIcon := menuIcons[m.parent]
-
-		header := titleStyle.Render("📖 DayOne CLI") + "\n"
-		header += subtitleStyle.Render("Your personal daily dashboard") + "\n"
-		header += boxStyle.Render(" "+parentIcon+" "+parentName+" ") + "\n\n"
-
-		// 메뉴 항목 렌더링
-		var menuLines string
-		for i, item := range m.subMenu {
-			if i == m.subCursor {
-				menuLines += selectedStyle.Render("  " + item + "  ") + "\n"
-			} else {
-				menuLines += menuItemStyle.Render("  " + item + "  ") + "\n"
-			}
-		}
-
-		menuBox := boxStyle.Render(menuLines)
-
-		footer := "\n" + hintStyle.Render("↑/↓ Navigate    ⏎ Select    ⎋ Back    ⎋ q: Quit")
-
-		s = header + menuBox + footer
-
-	case stateInput:
-		// 입력 화면 표시
-		parentName := m.menus[m.parent]
-		parentIcon := menuIcons[m.parent]
-
-		header := titleStyle.Render("📖 DayOne CLI") + "\n"
-		header += subtitleStyle.Render("Your personal daily dashboard") + "\n"
-		header += boxStyle.Render(" "+parentIcon+" "+parentName+" ") + "\n\n"
-
-		inputBox := widgetBoxStyle.Render(
-			"\n"+m.inputHint+"\n" +
-				"▸ "+m.input+"█",
-		)
-
-		footer := "\n\n" + hintStyle.Render("⏎ Enter: Submit    ⎋ Esc: Cancel    ⎋ q: Quit")
-
-		s = header + inputBox + footer
-
-	default:
-		// 대시보드 메뉴 표시
-		// 헤더
-		header := titleStyle.Render("📖 DayOne CLI") + "\n"
-		header += subtitleStyle.Render("Your personal daily dashboard") + "\n"
-		header += boxStyle.Render(" "+date+" ") + "\n\n"
-
-		// 위젯 영역 - 오늘 요약
-		var widgets string
-		widgets += renderWidgets(now)
-
-		// 메뉴 영역
-		var menuLines string
-		for i, item := range m.menus {
-			icon := menuIcons[i]
-			if i == m.cursor {
-				menuLines += selectedStyle.Render(" "+icon+" "+item+" ") + "\n"
-			} else {
-				menuLines += menuItemStyle.Render(" "+icon+" "+item+" ") + "\n"
-			}
-		}
-
-		menuBox := boxStyle.Render(menuLines)
-
-		footer := "\n" + hintStyle.Render("↑/↓ Navigate    ⏎ Select    ⎋ q: Quit")
-
-		s = header + widgets + menuBox + footer
-	}
-
-	v := tea.NewView(s)
-	v.AltScreen = true
-	return v
 }
 
 // 위젯 렌더링 - 대시보드에 오늘 요약 표시
@@ -810,65 +741,57 @@ func renderWidgets(now time.Time) string {
 
 	db, err := storage.OpenDB()
 	if err != nil {
-		return ""
+		return fmt.Sprintf("Error: %v\n", err)
 	}
 	defer db.Close()
 
 	// 일기 확인
 	journalRepo := journal.NewRepository(db)
 	_, errJournal := journalRepo.GetByDate(date)
+	if errJournal != nil && !journal.IsNotFound(errJournal) {
+		return fmt.Sprintf("Error loading journal: %v\n", errJournal)
+	}
 	hasJournal := (errJournal == nil)
 
 	// 작업 확인
 	taskRepo := task.NewRepository(db)
-	pendingTasks, _ := taskRepo.List("pending")
-	pendingCount := len(pendingTasks)
+	tasks, err := taskRepo.ListByDate(date)
+	if err != nil {
+		return fmt.Sprintf("Error loading tasks: %v\n", err)
+	}
+	pendingCount := 0
+	for _, t := range tasks {
+		if t.Status == "pending" {
+			pendingCount++
+		}
+	}
 
 	// 리뷰 확인
 	reviewRepo := review.NewRepository(db)
 	_, errReview := reviewRepo.GetByDate(date)
+	if errReview != nil && !review.IsNotFound(errReview) {
+		return fmt.Sprintf("Error loading review: %v\n", errReview)
+	}
 	hasReview := (errReview == nil)
 
 	// 통계 확인
 	svc := statistics.NewService(db)
-	journalStats, _ := svc.GetJournalStats()
+	journalStats, err := svc.GetJournalStats()
+	if err != nil {
+		return fmt.Sprintf("Error loading journal statistics: %v\n", err)
+	}
 	streak := journalStats.CurrentStreak
 
-	// 위젯 1: 오늘 상태
-	var todayStatus string
+	// 요약 데이터만 반환하고 화면 배치는 View에서 처리한다.
+	journalStatus, reviewStatus := "Not written", "Not written"
 	if hasJournal {
-		todayStatus += "📝 Journal ✓\n"
-	} else {
-		todayStatus += "📝 Journal ✗\n"
+		journalStatus = "Written"
 	}
 	if hasReview {
-		todayStatus += "📊 Review ✓\n"
-	} else {
-		todayStatus += "📊 Review ✗\n"
+		reviewStatus = "Written"
 	}
-	if pendingCount > 0 {
-		todayStatus += fmt.Sprintf("✅ Tasks: %d pending", pendingCount)
-	} else {
-		todayStatus += "✅ Tasks: All done!"
-	}
-
-	// 위젯 2: 연속 일수
-	streakText := fmt.Sprintf("🔥 %d day streak", streak)
-
-	// 위젯 박스 스타일
-	widgetStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#374151")).
-		Padding(1, 2).
-		Width(20)
-
-	widget1 := widgetStyle.Render(todayStatus)
-	widget2 := widgetStyle.Render(streakText)
-
-	// 두 위젯을 나란히 배치
-	return lipgloss.JoinHorizontal(lipgloss.Top, widget1, "  ", widget2) + "\n\n"
+	return fmt.Sprintf("JOURNAL  %s\nREVIEW   %s\nTASKS    %d pending\nSTREAK   %d days", journalStatus, reviewStatus, pendingCount, streak)
 }
-
 func RunDashboard() error {
 	p := tea.NewProgram(initialModel())
 	_, err := p.Run()

@@ -3,12 +3,14 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"DayOneCLI/internal/review"
+	"DayOneCLI/internal/statistics"
 	"DayOneCLI/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -34,13 +36,12 @@ func withReviewRepo(
 }
 
 // 터미널에서 리뷰 내용 입력
-func readReviewContent() (string, error) {
+func readReviewContent(reader *bufio.Reader) (string, error) {
 	fmt.Print("리뷰 내용 (선택사항, 엔터로 스킵) > ")
 
-	reader := bufio.NewReader(os.Stdin)
 	content, err := reader.ReadString('\n')
 
-	if err != nil && len(content) == 0 {
+	if err != nil && err != io.EOF {
 		return "", err
 	}
 
@@ -83,7 +84,7 @@ var reviewWriteCmd = &cobra.Command{
 		}
 
 		// 내용 입력
-		content, err := readReviewContent()
+		content, err := readReviewContent(reader)
 		if err != nil {
 			return err
 		}
@@ -147,7 +148,7 @@ var reviewListCmd = &cobra.Command{
 			}
 
 			for _, rev := range reviews {
-				stars := strings.Repeat("★", rev.Rating) + strings.Repeat("☆", 5-rev.Rating)
+				stars := statistics.FormatStars(float64(rev.Rating))
 				fmt.Printf("%s %s [%s]\n", rev.Date, rev.Mood, stars)
 				if rev.Content != "" {
 					fmt.Printf("  %s\n", rev.Content)
